@@ -234,6 +234,22 @@ export const listenClass = (code: string, cb: (data: ClassData) => void, onError
   return () => unsubs.forEach(u => u());
 };
 
+/** Nghe nhẹ bài giao + bài nộp của một lớp (để chấm hàng loạt nền, không tải file ghi âm). */
+export const listenClassForGrading = (
+  code: string,
+  cb: (d: { assignments: Record<string, Assignment>; submissions: Record<string, Record<string, Submission>> }) => void,
+) => {
+  const st = { assignments: {} as Record<string, Assignment>, submissions: {} as Record<string, Record<string, Submission>> };
+  const seen = new Set<string>();
+  const sub = (k: 'assignments' | 'submissions') => onValue(ref(getDb(), `classes/${code}/${k}`), snap => {
+    (st as any)[k] = snap.val() || {};
+    seen.add(k);
+    if (seen.size === 2) cb({ assignments: st.assignments, submissions: st.submissions });
+  }, () => {});
+  const u = [sub('assignments'), sub('submissions')];
+  return () => u.forEach(f => f());
+};
+
 export const addAssignment = async (
   code: string,
   topic: string,

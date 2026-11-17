@@ -10,7 +10,7 @@ import {
   Assignment, ClassData, LessonResult, StudentInfo, Submission, VocabItem, addAssignment, changeTeacherPassword,
   createClass, deleteClass, fetchRecording, listenCallName, listenClass, listenTeacherClasses, removeAssignment,
   removeStudent, resetToPending, saveCallName, DEFAULT_CALL_NAME,
-  SavedLesson, listenLibrary, saveToLibrary, markLibraryUsed, removeFromLibrary, newLibraryId, fetchLibraryAudio,
+  listenClassForGrading, SavedLesson, listenLibrary, saveToLibrary, markLibraryUsed, removeFromLibrary, newLibraryId, fetchLibraryAudio,
   listenSampleAudioDone, fetchSampleAudio, saveSampleAudio,
 } from '../../services/classroom';
 import { LessonCard, RecorderPreview } from './LessonCard';
@@ -69,7 +69,7 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
 
   // API key Gemini của cô (chỉ lưu trên máy cô)
   const [apiKey, setApiKey] = useState(() => getApiKeyForProvider());
-  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [showKeyModal, setShowKeyModal] = useState(() => !getApiKeyForProvider());
   const [callName, setCallName] = useState(DEFAULT_CALL_NAME);
   useEffect(() => listenCallName(setCallName), []);
 
@@ -82,42 +82,56 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
   const gradingRef = useRef(false);
   const failedRef = useRef<Set<string>>(new Set());
 
-  const runGrade = async (aid: string, sid: string) => {
-    if (!selected || !data || gradingRef.current) return;
-    const a = data.assignments[aid];
-    if (!a) return;
+  // Nghe nền bài giao + bài nộp của MỌI lớp để chấm lần lượt cả loạt
+  const [gradeData, setGradeData] = useState<Record<string, { assignments: Record<string, Assignment>; submissions: Record<string, Record<string, Submission>> }>>({});
+  const [gradingCode, setGradingCode] = useState<string | null>(null);
+  const classCodesKey = Object.keys(classes).sort().join(',');
+  useEffect(() => {
+    const codes = classCodesKey ? classCodesKey.split(',') : [];
+    const unsubs = codes.map(c => listenClassForGrading(c, d => setGradeData(g => ({ ...g, [c]: d }))));
+    return () => unsubs.forEach(u => u());
+  }, [classCodesKey]);
+
+  const runGrade = async (code: string, aid: string, sid: string) => {
+    const a = gradeData[code]?.assignments?.[aid];
+    if (!a || gradingRef.current) return;
     gradingRef.current = true;
     setGradingKey(`${aid}/${sid}`);
+    setGradingCode(code);
     setGradeError(null);
     try {
-      await gradeSubmission(selected, aid, sid, a, callName);
-      failedRef.current.delete(`${selected}/${aid}/${sid}`);
+      await gradeSubmission(code, aid, sid, a, callName);
+      failedRef.current.delete(`${code}/${aid}/${sid}`);
     } catch (e: any) {
-      failedRef.current.add(`${selected}/${aid}/${sid}`);
-      setGradeError(`${data.submissions[aid]?.[sid]?.name || 'Bài nộp'}: ${e.message}`);
+      failedRef.current.add(`${code}/${aid}/${sid}`);
+      setGradeError(`${gradeData[code]?.submissions?.[aid]?.[sid]?.name || 'Bài nộp'}: ${e.message}`);
     } finally {
       gradingRef.current = false;
       setGradingKey(null);
+      setGradingCode(null);
     }
   };
 
-  const pendingList = useMemo(() => {
-    if (!data) return [] as { aid: string; sid: string }[];
-    const out: { aid: string; sid: string; t: number }[] = [];
-    Object.entries(data.submissions || {}).forEach(([aid, bySid]) => {
-      if (!data.assignments[aid]?.readingText) return;
-      Object.entries(bySid || {}).forEach(([sid, s]) => {
-        if ((s as Submission).status === 'pending') out.push({ aid, sid, t: (s as Submission).submittedAt || 0 });
+  /** Hàng đợi chấm của tất cả các lớp, bài nộp trước chấm trước */
+  const pendingAll = useMemo(() => {
+    const out: { code: string; aid: string; sid: string; t: number }[] = [];
+    (Object.entries(gradeData) as [string, { assignments: Record<string, Assignment>; submissions: Record<string, Record<string, Submission>> }][]).forEach(([code, d]) => {
+      Object.entries(d.submissions || {}).forEach(([aid, bySid]) => {
+        if (!d.assignments?.[aid]?.readingText) return;
+        Object.entries(bySid || {}).forEach(([sid, s]) => {
+          if ((s as Submission).status === 'pending') out.push({ code, aid, sid, t: (s as Submission).submittedAt || 0 });
+        });
       });
     });
     return out.sort((x, y) => x.t - y.t);
-  }, [data]);
+  }, [gradeData]);
+  const pendingList = useMemo(() => pendingAll.filter(p => p.code === selected), [pendingAll, selected]);
 
   useEffect(() => {
-    if (!autoGrade || !apiKey || gradingRef.current || !selected) return;
-    const next = pendingList.find(p => !failedRef.current.has(`${selected}/${p.aid}/${p.sid}`));
-    if (next) runGrade(next.aid, next.sid);
-  }, [pendingList, autoGrade, apiKey, gradingKey, selected]);
+    if (!autoGrade || !apiKey || gradingRef.current) return;
+    const next = pendingAll.find(p => !failedRef.current.has(`${p.code}/${p.aid}/${p.sid}`));
+    if (next) runGrade(next.code, next.aid, next.sid);
+  }, [pendingAll, autoGrade, apiKey, gradingKey]);
 
   useEffect(() => listenTeacherClasses(
     c => { setClasses(c); setLoadingClasses(false); },
@@ -174,6 +188,37 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
 
   const shareLink = selected ? `${window.location.origin}/?lop=${selected}` : '';
   const sortedCodes = Object.keys(classes).sort((a, b) => (classes[b].createdAt || 0) - (classes[a].createdAt || 0));
+
+  // Bắt buộc có API key trước khi dùng Bảng giáo viên (tạo bài, chấm bài đều cần)
+  if (!apiKey) {
+    return (
+      <div className="min-h-screen bg-blue-50/40 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border-4 border-blue-100 p-6 sm:p-8 text-center space-y-4">
+          <BrandLogo className="w-16 h-16 mx-auto" />
+          <h1 className="text-xl sm:text-2xl font-black text-brand-green-dark">Nhập API key để bắt đầu</h1>
+          <p className="text-sm text-slate-600 leading-relaxed">
+            Cô cần nhập mã API key Gemini trước khi dùng Bảng giáo viên: key dùng để tạo bài và <b>chấm bài lần lượt</b> khi học sinh nộp.
+            Key chỉ lưu trên máy cô, không gửi cho học sinh.
+          </p>
+          <button onClick={() => setShowKeyModal(true)}
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-brand-green text-white font-black hover:brightness-110">
+            <Zap size={18} /> Nhập API key
+          </button>
+          <button onClick={onLogout} className="text-xs font-bold text-slate-400 hover:text-slate-600 flex items-center gap-1 mx-auto">
+            <LogOut size={13} /> Đăng xuất
+          </button>
+        </div>
+        <ApiKeyModal
+          show={showKeyModal}
+          currentApiKey={apiKey}
+          initialProvider={getAiProvider()}
+          initialModel={getSelectedModel()}
+          onSave={k => { setApiKey(k); setShowKeyModal(false); failedRef.current.clear(); setGradeError(null); }}
+          onClose={() => setShowKeyModal(false)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-blue-50/40">
@@ -238,6 +283,17 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
 
         {/* Chi tiết lớp */}
         <section id="design-area" className="lg:col-span-8 space-y-4 min-w-0 scroll-mt-24">
+          {(gradingKey || (autoGrade && pendingAll.length > 0)) && (
+            <div className="flex items-center gap-2 text-sm font-bold text-blue-800 bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3">
+              <RefreshCw size={16} className="animate-spin shrink-0" />
+              <span>
+                {gradingKey && gradingCode
+                  ? `Đang chấm bài của ${gradeData[gradingCode]?.submissions?.[gradingKey.split('/')[0]]?.[gradingKey.split('/')[1]]?.name || 'học sinh'} (lớp ${classes[gradingCode]?.name || gradingCode})`
+                  : 'Đang chuẩn bị chấm bài…'}
+                {pendingAll.length > 0 ? ` — còn ${pendingAll.length} bài chờ chấm, máy sẽ chấm lần lượt và gửi nhận xét cho học sinh.` : ''}
+              </span>
+            </div>
+          )}
           {error && (
             <div role="alert" className="flex items-start justify-between gap-2 text-sm font-bold text-red-700 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
               <span>{error}</span>
@@ -321,7 +377,7 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
                   autoGrade={autoGrade}
                   setAutoGrade={v => { setAutoGrade(v); try { localStorage.setItem('pu_auto_grade', v ? '1' : '0'); } catch { /* bỏ qua */ } }}
                   gradingKey={gradingKey} gradeError={gradeError}
-                  onGrade={(aid, sid) => { failedRef.current.delete(`${selected}/${aid}/${sid}`); runGrade(aid, sid); }}
+                  onGrade={(aid, sid) => { failedRef.current.delete(`${selected}/${aid}/${sid}`); runGrade(selected, aid, sid); }}
                   onRetry={async (aid, sid) => { failedRef.current.delete(`${selected}/${aid}/${sid}`); await resetToPending(selected, aid, sid); }}
                 />
               )}
@@ -970,6 +1026,11 @@ const GradeTab: React.FC<{
             </button>
           )}
         </div>
+        {!p.autoGrade && rows.some(r => r.s.status === 'pending') && (
+          <button onClick={() => p.setAutoGrade(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-green text-white font-black text-sm hover:brightness-110">
+            <ClipboardCheck size={16} /> Chấm lần lượt tất cả bài đang chờ
+          </button>
+        )}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="font-bold text-slate-500">Xưng hô trong lời nhận xét:</span>
           <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} className="w-32 px-2 py-1.5 border-2 border-blue-100 rounded-lg text-sm font-bold" />
