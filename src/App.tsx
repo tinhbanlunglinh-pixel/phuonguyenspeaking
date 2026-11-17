@@ -397,7 +397,7 @@ export default function App({ session = null, onLogout, onBackToTeacher, onJoinC
         <div className="mb-8 sm:mb-12 flex flex-col items-center justify-center text-center space-y-6">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center">
             <BrandLogo className="w-14 h-14 sm:w-16 sm:h-16 mb-4" />
-            <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-brand-green-dark tracking-tighter uppercase mb-2">Master speaking with Cô Phượng Uyên AI</h2>
+            <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-brand-green-dark tracking-tighter uppercase mb-2">Master speaking with Ms Phuong</h2>
           </motion.div>
           
           <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 bg-slate-100/50 p-2 rounded-2xl border border-slate-200">
