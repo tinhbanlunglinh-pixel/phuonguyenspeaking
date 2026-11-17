@@ -56,7 +56,9 @@ const SPEEDS = [0.5, 0.75, 1, 1.25];
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 // ---------------- Thanh phát bài đọc ----------------
-const AudioBar: React.FC<{ text: string; level: string; loadAudio?: () => Promise<string | null> }> = ({ text, level, loadAudio }) => {
+export interface ReadProgress { pos: number; playing: boolean; mode: 'ai' | 'tts' }
+
+const AudioBar: React.FC<{ text: string; level: string; loadAudio?: () => Promise<string | null>; onProgress?: (p: ReadProgress) => void }> = ({ text, level, loadAudio, onProgress }) => {
   const [speed, setSpeed] = useState(1);
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -79,6 +81,8 @@ const AudioBar: React.FC<{ text: string; level: string; loadAudio?: () => Promis
   }, [text]);
   const total = Math.max(1, text.length);
   const curIdx = useRef(0);
+
+  useEffect(() => { onProgress?.({ pos, playing, mode }); }, [pos, playing, mode]);
 
   // đổi bài → dừng & dọn
   useEffect(() => {
@@ -203,6 +207,49 @@ const AudioBar: React.FC<{ text: string; level: string; loadAudio?: () => Promis
   );
 };
 
+// ---------------- Chữ sáng theo giọng đọc ----------------
+const ReadAlong: React.FC<{ text: string; prog: ReadProgress }> = ({ text, prog }) => {
+  const parts = useMemo(() => {
+    const out: { t: string; word: boolean; start: number; w: number; cum: number }[] = [];
+    let start = 0, cum = 0;
+    for (const t of text.split(/(\s+)/)) {
+      if (!t) continue;
+      const word = !/^\s+$/.test(t);
+      // trọng số thời gian: độ dài chữ + nghỉ ở dấu câu (để khớp giọng AI)
+      const w = word ? t.length + (/[.!?]["')\]]*$/.test(t) ? 6 : /[,;:]$/.test(t) ? 3 : 0) : 0;
+      out.push({ t, word, start, w, cum });
+      start += t.length; cum += w;
+    }
+    return { items: out, totalW: Math.max(1, cum), totalC: Math.max(1, text.length) };
+  }, [text]);
+
+  const active = prog.playing || prog.pos > 0;
+  let cur = -1;
+  if (active) {
+    const items = parts.items;
+    if (prog.mode === 'tts') {
+      const c = prog.pos * parts.totalC;
+      items.forEach((x, i) => { if (x.word && x.start <= c) cur = i; });
+    } else {
+      const target = prog.pos * parts.totalW;
+      items.forEach((x, i) => { if (x.word && x.cum <= target) cur = i; });
+    }
+    if (prog.pos >= 0.999) cur = items.length;
+  }
+
+  return (
+    <p className="text-xl sm:text-2xl leading-relaxed font-semibold text-slate-800 whitespace-pre-wrap">
+      {parts.items.map((x, i) => {
+        if (!x.word) return x.t;
+        const cls = !active ? '' : i === cur
+          ? 'bg-yellow-300 text-slate-900 rounded px-0.5 -mx-0.5 shadow-sm'
+          : i < cur ? 'text-blue-600' : 'text-slate-400';
+        return <span key={i} className={`transition-colors duration-150 ${cls}`}>{x.t}</span>;
+      })}
+    </p>
+  );
+};
+
 // ---------------- Thẻ từ vựng ----------------
 const VocabGrid: React.FC<{ items: VocabItem[] }> = ({ items }) => (
   <div className="space-y-2">
@@ -234,6 +281,7 @@ export const LessonCard: React.FC<{
 }> = ({ a, label = 'Bài cô giao', loadAudio }) => {
   const [showVi, setShowVi] = useState(false);
   const [imgOk, setImgOk] = useState(true);
+  const [prog, setProg] = useState<ReadProgress>({ pos: 0, playing: false, mode: 'tts' });
   useEffect(() => { setImgOk(true); }, [a.image]);
 
   return (
@@ -256,8 +304,8 @@ export const LessonCard: React.FC<{
       </div>
 
       <div className="px-5 sm:px-7 py-5 space-y-5">
-        {a.readingText && <AudioBar text={a.readingText} level={a.level} loadAudio={loadAudio} />}
-        <p className="text-xl sm:text-2xl leading-relaxed font-semibold text-slate-800 whitespace-pre-wrap">{a.readingText}</p>
+        {a.readingText && <AudioBar text={a.readingText} level={a.level} loadAudio={loadAudio} onProgress={setProg} />}
+        {a.readingText && <ReadAlong text={a.readingText} prog={prog} />}
         {showVi && a.translation && <p className="text-base sm:text-lg text-slate-500 italic whitespace-pre-wrap border-l-4 border-blue-200 pl-3">{a.translation}</p>}
         {a.vocabulary && a.vocabulary.length > 0 && <VocabGrid items={a.vocabulary} />}
       </div>
