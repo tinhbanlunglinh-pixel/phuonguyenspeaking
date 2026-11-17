@@ -14,6 +14,7 @@ import {
   listenSampleAudioDone, fetchSampleAudio, saveSampleAudio,
 } from '../../services/classroom';
 import { LessonCard, RecorderPreview } from './LessonCard';
+import { ClassScoreboard } from './ClassScoreboard';
 import { VoiceSettings } from './VoiceSettings';
 import { getTtsProvider } from '../../services/elevenlabs';
 import { getGeminiKeyPool, setKeyOverride, getApiKeyForProvider as mainKey } from '../../services/geminiService';
@@ -61,6 +62,7 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<'students' | 'assign' | 'grade'>('students');
+  const [resultView, setResultView] = useState<'board' | 'list'>('board');
   const [copied, setCopied] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showPass, setShowPass] = useState(false);
@@ -285,10 +287,24 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
               {!data ? (
                 <p className="text-center text-slate-400 py-10">Đang tải dữ liệu lớp...</p>
               ) : tab === 'students' ? (
-                <StudentsTable rows={rows} expanded={expanded} setExpanded={setExpanded}
-                  onRemove={async (sid, name) => {
-                    if (confirm(`Xoá học sinh "${name}" và toàn bộ kết quả của con khỏi lớp?`)) await removeStudent(selected, sid);
-                  }} />
+                <div className="space-y-4">
+                  <div className="flex gap-2 bg-white p-1 rounded-xl border border-blue-100 w-fit">
+                    {([['board', 'Bảng điểm & báo cáo tháng'], ['list', 'Danh sách học sinh']] as const).map(([k, label]) => (
+                      <button key={k} onClick={() => setResultView(k)}
+                        className={`px-3 py-1.5 rounded-lg font-black text-xs sm:text-sm ${resultView === k ? 'bg-blue-100 text-brand-green-dark' : 'text-slate-500 hover:bg-slate-50'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {resultView === 'board' ? (
+                    <ClassScoreboard code={selected} className={classes[selected]?.name || ''} data={data} callName={callName} />
+                  ) : (
+                    <StudentsTable rows={rows} expanded={expanded} setExpanded={setExpanded}
+                      onRemove={async (sid, name) => {
+                        if (confirm(`Xoá học sinh "${name}" và toàn bộ kết quả của con khỏi lớp?`)) await removeStudent(selected, sid);
+                      }} />
+                  )}
+                </div>
               ) : tab === 'assign' ? (
                 <AssignTab code={selected} data={data} onError={setError} hasKey={!!apiKey} onNeedKey={() => setShowKeyModal(true)} />
               ) : (
