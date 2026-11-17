@@ -1,0 +1,87 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "teachers": {
+      "$tid": {
+        ".read": true,
+        "passHash": { ".write": true, ".validate": "newData.isString() && newData.val().length === 64" },
+        "callName": { ".write": true, ".validate": "newData.isString() && newData.val().length <= 40" },
+        "classes": {
+          "$code": {
+            ".write": true,
+            ".validate": "!newData.exists() || newData.hasChildren(['name'])"
+          }
+        },
+        "library": {
+          "$lid": {
+            ".write": true,
+            ".validate": "!newData.exists() || (newData.hasChildren(['topic', 'level', 'readingText']) && $lid.matches(/^l_[0-9a-z_]{1,40}$/))",
+            "topic": { ".validate": "newData.isString() && newData.val().length <= 200" },
+            "level": { ".validate": "newData.isString() && newData.val().length <= 20" },
+            "readingText": { ".validate": "newData.isString() && newData.val().length <= 6000" },
+            "translation": { ".validate": "newData.isString() && newData.val().length <= 8000" },
+            "usedCount": { ".validate": "newData.isNumber()" }
+          }
+        }
+      }
+    },
+    "classes": {
+      "$code": {
+        ".read": true,
+        ".write": "!newData.exists() || data.exists() || newData.child('info').exists()",
+        ".validate": "$code.matches(/^[A-Z0-9]{6}$/)",
+        "info": {
+          ".validate": "newData.hasChildren(['name', 'teacher']) && newData.child('name').isString() && newData.child('name').val().length <= 80"
+        },
+        "students": {
+          "$sid": {
+            ".validate": "$sid.matches(/^[a-z0-9-]{1,60}$/) && newData.hasChildren(['name']) && newData.child('name').isString() && newData.child('name').val().length <= 80"
+          }
+        },
+        "results": {
+          "$sid": {
+            ".validate": "newData.parent().parent().child('students/' + $sid).exists()",
+            "$lessonId": {
+              "speakingScore": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10" },
+              "exerciseScore": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10" },
+              "topic": { ".validate": "newData.isString() && newData.val().length <= 200" },
+              "level": { ".validate": "newData.isString() && newData.val().length <= 20" },
+              "submitted": { ".validate": "newData.isBoolean()" },
+              "createdAt": { ".validate": "newData.isNumber()" },
+              "submittedAt": { ".validate": "newData.isNumber()" },
+              "$other": { ".validate": false }
+            }
+          }
+        },
+        "assignments": {
+          "$aid": {
+            ".validate": "newData.hasChildren(['topic', 'level']) && newData.child('topic').isString() && newData.child('topic').val().length <= 200",
+            "readingText": { ".validate": "newData.isString() && newData.val().length <= 6000" },
+            "translation": { ".validate": "newData.isString() && newData.val().length <= 8000" }
+          }
+        },
+        "submissions": {
+          "$aid": {
+            "$sid": {
+              ".validate": "newData.hasChildren(['name', 'status']) && newData.parent().parent().parent().child('students/' + $sid).exists()",
+              "status": { ".validate": "newData.isString() && newData.val().matches(/^(pending|graded|error)$/)" },
+              "report": { ".validate": "newData.isString() && newData.val().length <= 8000" },
+              "result": {
+                "score": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10" }
+              }
+            }
+          }
+        },
+        "audio": {
+          "$aid": {
+            "$sid": {
+              ".validate": "newData.isString() && newData.val().length <= 12000000 && newData.parent().parent().parent().child('students/' + $sid).exists()"
+            }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
