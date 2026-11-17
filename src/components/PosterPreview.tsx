@@ -138,7 +138,7 @@ export const PosterPreview: React.FC<PosterPreviewProps> = ({
 
       {/* Footer */}
       <div className="flex justify-between items-center pt-2" style={{ borderTop: '1px solid #f3f4f6' }}>
-        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#9ca3af' }}>MS LÝ ENGLISH</span>
+        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#9ca3af' }}>CÔ PHƯỢNG UYÊN</span>
         <span className="text-[10px] font-black" style={{ color: '#1d4ed8' }}>Level: {level}</span>
       </div>
     </div>

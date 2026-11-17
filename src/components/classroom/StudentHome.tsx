@@ -8,7 +8,8 @@ import {
   Assignment, StudentSession, Submission, listenAssignments, listenMySubmissions, submitRecording,
   buildParentReport, listenCallName, DEFAULT_CALL_NAME,
 } from '../../services/classroom';
-import { fetchLessonAudio } from '../../services/classroom';
+import { fetchLessonAudio, fetchMyExerciseScore, saveLessonResult } from '../../services/classroom';
+import { ExerciseSection } from '../ExerciseSection';
 import { speakWithBrowser, stopBrowserTTS, EnglishLevel } from '../../services/geminiService';
 import { useRecorder } from '../../hooks/useRecorder';
 
@@ -130,6 +131,8 @@ const LessonRunner: React.FC<{
   const [sending, setSending] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [redo, setRedo] = useState(false);
+  const [exScore, setExScore] = useState<number | null>(null);
+  useEffect(() => { if (a.exercise) fetchMyExerciseScore(session, aid).then(setExScore); }, [aid, session.sid, !!a.exercise]);
 
   const onCaptured = useCallback((b64: string, dur: number) => setCaptured({ b64, dur }), []);
   const rec = useRecorder(a.readingText || '', a.level as EnglishLevel, setError, onCaptured);
@@ -169,6 +172,18 @@ const LessonRunner: React.FC<{
       </button>
 
       <LessonCard a={a} loadAudio={loadAudio} />
+
+      {/* Bài tập cô giao kèm */}
+      {a.exercise && (
+        <div className="space-y-2">
+          <p className="text-xs font-black text-amber-700 uppercase tracking-wider px-1">🧩 Bài tập kèm theo — con làm sau khi đọc</p>
+          <ExerciseSection
+            exerciseData={a.exercise}
+            savedScore={exScore}
+            onComplete={sc => { setExScore(sc); saveLessonResult(session, aid, { topic: a.topic, level: a.level, exerciseScore: sc }); }}
+          />
+        </div>
+      )}
 
       {/* Kết quả cô chấm */}
       {graded && !redo && !sub!.result!.isSilent && (

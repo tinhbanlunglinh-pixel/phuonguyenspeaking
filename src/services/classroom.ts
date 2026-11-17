@@ -5,6 +5,7 @@
 // và hiện ngay lập tức trên bảng theo dõi của GV.
 // ============================================================
 import { initializeApp, getApps } from 'firebase/app';
+import type { ExerciseData } from '../types';
 import {
   getDatabase, ref, get, set, update, remove, onValue, serverTimestamp, Database,
 } from 'firebase/database';
@@ -67,6 +68,8 @@ export interface Assignment {
   image?: string;
   /** Có file giọng đọc AI ở classes/{MÃ}/lessonAudio/{aid} */
   hasAudio?: boolean;
+  /** Bài tập kèm theo (AI thiết kế): học sinh làm sau khi đọc */
+  exercise?: ExerciseData;
 }
 
 /** Kết quả chấm (rút gọn từ EvaluationResult) */
@@ -255,7 +258,7 @@ export const addAssignment = async (
   topic: string,
   level: string,
   note = '',
-  lesson?: { readingText: string; translation?: string; vocabulary?: VocabItem[]; image?: string; audio?: string | null },
+  lesson?: { readingText: string; translation?: string; vocabulary?: VocabItem[]; image?: string; audio?: string | null; exercise?: ExerciseData | null },
 ) => {
   if (!topic.trim()) throw new Error('Vui lòng nhập chủ đề cần giao.');
   const id = `a_${Date.now()}`;
@@ -265,6 +268,7 @@ export const addAssignment = async (
     if (lesson.translation) data.translation = lesson.translation.trim();
     if (lesson.image && lesson.image.length <= 400000) data.image = lesson.image;
     if (lesson.audio) data.hasAudio = true;
+    if (lesson.exercise) data.exercise = JSON.parse(JSON.stringify(lesson.exercise));
     if (lesson.vocabulary?.length) {
       data.vocabulary = lesson.vocabulary.slice(0, 20).map(v => ({
         word: String(v.word || ''), ipa: String(v.ipa || ''), meaning: String(v.meaning || ''), emoji: String(v.emoji || ''),
@@ -350,6 +354,7 @@ export interface SavedLesson {
   usedCount?: number;
   image?: string;
   hasAudio?: boolean;
+  exercise?: ExerciseData;
 }
 
 export const newLibraryId = () => `l_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -360,7 +365,7 @@ export const listenLibrary = (cb: (l: Record<string, SavedLesson>) => void) =>
 /** Lưu (hoặc ghi đè) một bài vào kho của cô. */
 export const saveToLibrary = async (
   lid: string,
-  lesson: { topic: string; level: string; readingText: string; translation?: string; vocabulary?: VocabItem[]; image?: string; audio?: string | null },
+  lesson: { topic: string; level: string; readingText: string; translation?: string; vocabulary?: VocabItem[]; image?: string; audio?: string | null; exercise?: ExerciseData | null },
   isNew: boolean,
 ) => {
   if (!lesson.readingText?.trim()) return;
@@ -376,6 +381,7 @@ export const saveToLibrary = async (
     image: lesson.image && lesson.image.length <= 400000 ? lesson.image : null,
   };
   if (lesson.audio !== undefined) data.hasAudio = !!lesson.audio;
+  if (lesson.exercise !== undefined) data.exercise = lesson.exercise ? JSON.parse(JSON.stringify(lesson.exercise)) : null;
   if (isNew) data.createdAt = serverTimestamp();
   await update(ref(getDb(), `teachers/${TEACHER_ID}/library/${lid}`), data);
   if (lesson.audio !== undefined) await set(ref(getDb(), `teachers/${TEACHER_ID}/libraryAudio/${lid}`), lesson.audio || null);
@@ -406,6 +412,12 @@ export const saveSampleAudio = (sid: string, b64: string) =>
 export const fetchLibraryAudio = async (lid: string): Promise<string | null> => {
   const snap = await get(ref(getDb(), `teachers/${TEACHER_ID}/libraryAudio/${lid}`));
   return snap.exists() ? String(snap.val()) : null;
+};
+export const fetchMyExerciseScore = async (s: StudentSession, aid: string): Promise<number | null> => {
+  try {
+    const snap = await get(ref(getDb(), `classes/${s.code}/results/${s.sid}/${aid}/exerciseScore`));
+    return snap.exists() ? Number(snap.val()) : null;
+  } catch { return null; }
 };
 export const fetchLessonAudio = async (code: string, aid: string): Promise<string | null> => {
   const snap = await get(ref(getDb(), `classes/${code}/lessonAudio/${aid}`));

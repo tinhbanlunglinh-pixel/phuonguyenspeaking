@@ -104,7 +104,7 @@ export const drawReportImage = async (p: ReportImageInput): Promise<HTMLCanvasEl
 
   ctx.fillStyle = '#facc15';
   ctx.font = `900 54px ${FONT}`;
-  ctx.fillText('MS LÝ ENGLISH', PAD + 140, 104);
+  ctx.fillText('CÔ PHƯỢNG UYÊN', PAD + 140, 104);
   ctx.fillStyle = 'rgba(255,255,255,0.92)';
   ctx.font = `700 24px ${FONT}`;
   ctx.fillText('NHẬN XÉT BÀI LUYỆN ĐỌC', PAD + 142, 142);
@@ -177,7 +177,7 @@ export const drawReportImage = async (p: ReportImageInput): Promise<HTMLCanvasEl
   ctx.fillStyle = '#1e3a8a';
   ctx.font = `800 26px ${FONT}`;
   ctx.textAlign = 'right';
-  ctx.fillText(`${p.callName} · Cô Phượng Uyên ❤️`, W - PAD, H - FOOTER_H / 2 + 9);
+  ctx.fillText(`Trung tâm Cô Phượng Uyên ❤️`, W - PAD, H - FOOTER_H / 2 + 9);
   ctx.textAlign = 'left';
 
   return c;

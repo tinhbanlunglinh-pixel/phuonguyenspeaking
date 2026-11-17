@@ -27,12 +27,14 @@ type Draft = {
   topic: string; readingText: string; translation: string; vocabulary: VocabItem[];
   origin: 'ai' | 'sample' | 'saved'; libId?: string; sampleId?: string;
   image?: string;
+  exercise?: ExerciseData | null;
   /** giọng Leda lấy từ kho giọng bài mẫu (không tính là cô sửa bài) */
   sampleAudio?: boolean;
   /** WAV base64; null = chưa có; undefined = đang tải từ kho */
   audio?: string | null;
 };
-import { generateContent, getAiProvider, getApiKeyForProvider, getSelectedModel, EnglishLevel } from '../../services/geminiService';
+import type { ExerciseData } from '../../types';
+import { generateContent, generateExercise, getAiProvider, getApiKeyForProvider, getSelectedModel, EnglishLevel } from '../../services/geminiService';
 import { gradeSubmission, friendlyAiError } from '../../services/grading';
 
 const LEVELS = ['Starters', 'Movers', 'Flyers', 'A1', 'A2', 'B1', 'B2'];
@@ -500,13 +502,36 @@ const AssignTab: React.FC<{
   code: string | null; data: ClassData; onError: (m: string) => void; hasKey: boolean; onNeedKey: () => void;
   classes: Record<string, { name: string; createdAt: number }>;
 }> = ({ code, data, onError, hasKey, onNeedKey, classes }) => {
-  const [mode, setMode] = useState<'library' | 'generate' | 'useInput'>('library');
+  const [mode, setMode] = useState<'library' | 'generate' | 'image' | 'useInput'>('library');
+  const [photo, setPhoto] = useState<string | null>(null);   // ảnh cô tải lên (đã thu nhỏ)
+  const [copyText, setCopyText] = useState(false);            // ảnh là trang sách → chép đúng chữ
+
+  /** Thu nhỏ ảnh ≤ 1000px để vừa gửi AI vừa lưu kèm bài */
+  const loadPhoto = (file?: File | null) => {
+    if (!file) return;
+    const fr = new FileReader();
+    fr.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const k = Math.min(1, 1000 / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+        setPhoto(c.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = () => onError('Chưa đọc được ảnh này, cô thử ảnh khác nhé.');
+      img.src = String(fr.result);
+    };
+    fr.readAsDataURL(file);
+  };
   const [input, setInput] = useState('');
   const [level, setLevel] = useState('Starters');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<'' | 'gen' | 'save'>('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [withExercise, setWithExercise] = useState(false);
+  const [exBusy, setExBusy] = useState(false);
   const [targets, setTargets] = useState<string[]>(code ? [code] : []);
   useEffect(() => { setTargets(code ? [code] : []); }, [code]);
   const classCodes = Object.keys(classes).sort((a, b) => (classes[b].createdAt || 0) - (classes[a].createdAt || 0));
@@ -567,12 +592,12 @@ const AssignTab: React.FC<{
 
   const [media, setMedia] = useState<'' | 'img' | 'audio'>('');
 
-  const openLesson = (l: { topic: string; level: string; readingText: string; translation?: string; vocabulary?: VocabItem[]; image?: string; hasAudio?: boolean }, origin: Draft['origin'], id: string) => {
+  const openLesson = (l: { topic: string; level: string; readingText: string; translation?: string; vocabulary?: VocabItem[]; image?: string; hasAudio?: boolean; exercise?: ExerciseData }, origin: Draft['origin'], id: string) => {
     setLevel(l.level);
     setSavedMsg(null);
     setDraft({
       topic: l.topic, readingText: l.readingText, translation: l.translation || '', vocabulary: l.vocabulary || [],
-      image: l.image, audio: (origin === 'saved' && l.hasAudio) || (origin === 'sample' && sampleDone[id]) ? undefined : null,
+      image: l.image, exercise: l.exercise || null, audio: (origin === 'saved' && l.hasAudio) || (origin === 'sample' && sampleDone[id]) ? undefined : null,
       sampleAudio: origin === 'sample' && !!sampleDone[id],
       origin, libId: origin === 'saved' ? id : undefined, sampleId: origin === 'sample' ? id : undefined,
     });
@@ -616,19 +641,26 @@ const AssignTab: React.FC<{
 
   const generate = async () => {
     if (!hasKey) { onNeedKey(); return; }
-    if (!input.trim()) { onError(mode === 'generate' ? 'Cô nhập chủ đề hoặc từ vựng trước nhé.' : 'Cô dán đoạn văn tiếng Anh trước nhé.'); return; }
+    if (mode === 'image' && !photo) { onError('Cô tải một bức ảnh lên trước nhé.'); return; }
+    if (mode !== 'image' && !input.trim()) { onError(mode === 'generate' ? 'Cô nhập chủ đề hoặc từ vựng trước nhé.' : 'Cô dán đoạn văn tiếng Anh trước nhé.'); return; }
     setBusy('gen'); setSavedMsg(null);
     let made = false;
     try {
-      const r = await generateContent(input.trim(), level as EnglishLevel, mode === 'useInput' ? 'useInput' : 'generate');
-      const lesson = { topic: r.topicName || input.trim().slice(0, 60), level, readingText: r.readingText, translation: r.translation, vocabulary: r.vocabulary || [] };
+      const r = mode === 'image'
+        ? await generateContent(input.trim() || (copyText ? 'Extract text from image' : 'A scene based on the provided image'), level as EnglishLevel, copyText ? 'useInput' : 'generate', photo || undefined)
+        : await generateContent(input.trim(), level as EnglishLevel, mode === 'useInput' ? 'useInput' : 'generate');
+      const lesson: { topic: string; level: string; readingText: string; translation: string; vocabulary: VocabItem[]; exercise?: ExerciseData | null } = { topic: r.topicName || input.trim().slice(0, 60) || 'Bài từ hình ảnh', level, readingText: r.readingText, translation: r.translation, vocabulary: r.vocabulary || [] };
+      if (withExercise) {
+        setBusy('gen');
+        lesson.exercise = await generateExercise(r.readingText, level as EnglishLevel).catch(() => { onError('Bài đọc đã tạo, nhưng chưa tạo được phần bài tập. Cô bấm "+ Tạo bài tập" ở bên dưới để thử lại.'); return null; });
+      }
       // Tạo đến đâu lưu đến đấy: bấm "Tạo lại" thì ghi đè bản nháp AI chưa giao, không sinh bài rác.
       const reuse = draft?.origin === 'ai' && draft.libId ? draft.libId : null;
       const lid = reuse || newLibraryId();
       made = true;
-      setDraft({ ...lesson, origin: 'ai', libId: lid, image: undefined, audio: null });
+      setDraft({ ...lesson, origin: 'ai', libId: lid, image: mode === 'image' && photo && photo.length <= 400000 ? photo : undefined, audio: null });
       setTimeout(() => document.getElementById('assign-draft')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
-      try { await saveToLibrary(lid, { ...lesson, image: undefined, audio: null }, !reuse); } catch { onError('Bài đã tạo nhưng chưa lưu được vào kho (mất mạng?).'); }
+      try { await saveToLibrary(lid, { ...lesson, image: mode === 'image' && photo && photo.length <= 400000 ? photo : undefined, audio: null }, !reuse); } catch { onError('Bài đã tạo nhưng chưa lưu được vào kho (mất mạng?).'); }
       setBusy('');
       // Ảnh + giọng đọc AI tạo ngay sau bài (dùng key của cô), tự lưu vào kho
       setMedia('img');
@@ -684,7 +716,7 @@ const AssignTab: React.FC<{
     if (!draft || !draft.readingText.trim()) return false;
     try {
       const audio = draft.audio === undefined ? undefined : (draft.audio || null);
-      const lesson = { topic: draft.topic, level, readingText: draft.readingText, translation: draft.translation, vocabulary: draft.vocabulary, image: draft.image, audio };
+      const lesson = { topic: draft.topic, level, readingText: draft.readingText, translation: draft.translation, vocabulary: draft.vocabulary, image: draft.image, audio, exercise: draft.exercise === undefined ? undefined : (draft.exercise || null) };
       if (draft.libId) {
         await saveToLibrary(draft.libId, lesson, false);
         if (!quiet) setSavedMsg(`Đã lưu "${draft.topic}" vào Kho bài (trình độ ${level}).`);
@@ -711,6 +743,31 @@ const AssignTab: React.FC<{
   const peekLoader = (id: string) => (peekLoaders.current[id] ||= () => fetchLibraryAudio(id));
   const samplePeekLoader = (id: string) => (peekLoaders.current['S' + id] ||= () => fetchSampleAudio(id));
 
+  const exerciseChooser = (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {([[false, '📄 Bài đọc như bài mẫu', 'Bài đọc + bản dịch + từ vựng (nhanh, nhẹ).'],
+         [true, '🧩 Bài AI thiết kế đầy đủ', 'Bài đọc + 30 câu bài tập (trắc nghiệm, dịch, sắp xếp câu, tìm lỗi, điền từ).']] as const).map(([v, t, d]) => (
+        <button type="button" key={String(v)} onClick={() => setWithExercise(v)}
+          className={`text-left p-3 rounded-2xl border-2 ${withExercise === v ? 'border-brand-green bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-200'}`}>
+          <p className="font-black text-sm text-slate-800">{t}</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">{d}</p>
+        </button>
+      ))}
+    </div>
+  );
+
+  const addExercise = async () => {
+    if (!draft) return;
+    if (!hasKey) { onNeedKey(); return; }
+    const d0 = draft;
+    setExBusy(true);
+    try {
+      const ex = await generateExercise(d0.readingText, level as EnglishLevel);
+      setDraft(d => (d && d.readingText === d0.readingText ? { ...d, exercise: ex } : d));
+      if (d0.libId) await saveToLibrary(d0.libId, { ...d0, level, exercise: ex, audio: undefined }, false).catch(() => {});
+    } catch (e: any) { onError(friendlyAiError(e)); } finally { setExBusy(false); }
+  };
+
   const wc = (t: string) => t.split(/\s+/).filter(Boolean).length;
   const lessonRow = (id: string, l: { topic: string; readingText: string; theme?: string; usedCount?: number; image?: string; hasAudio?: boolean }, origin: Draft['origin']) => (
     <li key={id} className="px-2 py-2.5">
@@ -722,7 +779,7 @@ const AssignTab: React.FC<{
           <p className="font-bold text-slate-800 truncate">{l.topic}</p>
           <p className="text-xs text-slate-500 truncate">
             {origin === 'sample' ? (l.theme || 'Bài mẫu') : 'Cô đã tạo'} · {wc(l.readingText)} từ
-            {l.usedCount ? ` · đã giao ${l.usedCount} lần` : ''}{l.hasAudio || (origin === 'sample' && sampleDone[id]) ? ' · 🎙️ giọng AI' : ''}
+            {l.usedCount ? ` · đã giao ${l.usedCount} lần` : ''}{l.hasAudio || (origin === 'sample' && sampleDone[id]) ? ' · 🎙️ giọng AI' : ''}{(l as any).exercise ? ' · 🧩 có bài tập' : ''}
           </p>
           <p className="text-[11px] font-bold text-blue-600">{peek === id ? '▲ Thu gọn' : '▼ Xem như học sinh'}</p>
           </span>
@@ -757,7 +814,7 @@ const AssignTab: React.FC<{
           )}
         </div>
         <div className="flex gap-1 sm:gap-2 bg-slate-100 p-1 rounded-xl text-xs sm:text-sm">
-          {([['library', '📚 Kho bài theo trình độ'], ['generate', '💡 AI tạo bài'], ['useInput', '📝 Đoạn văn của cô']] as const).map(([m, label]) => (
+          {([['library', '📚 Kho bài'], ['generate', '💡 Chủ đề'], ['image', '🖼️ Hình ảnh'], ['useInput', '📝 Văn bản']] as const).map(([m, label]) => (
             <button type="button" key={m} onClick={() => setMode(m)}
               className={`flex-1 py-2 px-1 rounded-lg font-black ${mode === m ? 'bg-white shadow text-brand-green-dark' : 'text-slate-500'}`}>{label}</button>
           ))}
@@ -810,7 +867,7 @@ const AssignTab: React.FC<{
             <div className="rounded-2xl border border-amber-100">
               <p className="px-3 pt-2.5 text-[11px] font-black text-amber-700 uppercase tracking-wider">✍️ Bài cô đã tạo — {level} ({mine.length})</p>
               {mine.length === 0 ? (
-                <p className="px-3 py-3 text-xs text-slate-400">Chưa có bài trình độ này. Mỗi bài cô tạo ở tab "AI tạo bài" hoặc "Đoạn văn của cô" sẽ tự lưu vào đây để dùng lại cho lớp khác.</p>
+                <p className="px-3 py-3 text-xs text-slate-400">Chưa có bài trình độ này. Mỗi bài cô tạo ở tab Chủ đề, Hình ảnh hoặc Văn bản sẽ tự lưu vào đây để dùng lại cho lớp khác.</p>
               ) : (
                 <ul className="divide-y divide-slate-100 px-1">
                   {mine.map(([id, l]) => lessonRow(id, l, 'saved'))}
@@ -820,11 +877,33 @@ const AssignTab: React.FC<{
             <p className="text-[11px] text-slate-400">Giao bài từ kho không cần API key. Bài mẫu soạn theo chủ đề và độ khó của Cambridge YLE (Starters–Flyers) và CEFR (A1–B2).</p>
           </div>
         ) : mode === 'generate' ? (
-          <input value={input} onChange={e => setInput(e.target.value)} placeholder="Chủ đề hoặc từ vựng, VD: My family; cake, picture, seven"
-            className="w-full px-3 py-2.5 text-sm border-2 border-blue-100 rounded-xl focus:outline-none focus:border-brand-green" />
+          <div className="space-y-3">
+            {exerciseChooser}
+            <input value={input} onChange={e => setInput(e.target.value)} placeholder="Chủ đề hoặc từ vựng, VD: My family; cake, picture, seven"
+              className="w-full px-3 py-2.5 text-sm border-2 border-blue-100 rounded-xl focus:outline-none focus:border-brand-green" />
+          </div>
+        ) : mode === 'image' ? (
+          <div className="space-y-3">
+            {exerciseChooser}
+            <label className="block rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/40 p-4 text-center cursor-pointer hover:bg-blue-50">
+              <input type="file" accept="image/*" className="hidden" onChange={e => { loadPhoto(e.target.files?.[0]); e.target.value = ''; }} />
+              {photo ? <img src={photo} alt="Ảnh đã chọn" className="mx-auto max-h-56 rounded-xl" />
+                : <span className="text-sm font-bold text-slate-500">🖼️ Bấm để tải ảnh lên (tranh minh hoạ hoặc trang sách)</span>}
+              {photo && <span className="block mt-2 text-[11px] font-bold text-blue-600">Bấm để đổi ảnh khác</span>}
+            </label>
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+              <input type="checkbox" checked={copyText} onChange={e => setCopyText(e.target.checked)} className="w-4 h-4 accent-blue-600" />
+              Ảnh là trang sách — chép đúng nguyên văn chữ trong ảnh
+            </label>
+            <input value={input} onChange={e => setInput(e.target.value)} placeholder="Gợi ý chủ đề (không bắt buộc)"
+              className="w-full px-3 py-2.5 text-sm border-2 border-blue-100 rounded-xl focus:outline-none focus:border-brand-green" />
+          </div>
         ) : (
+          <div className="space-y-3">
+            {exerciseChooser}
           <textarea value={input} onChange={e => setInput(e.target.value)} rows={5} placeholder="Dán đoạn văn tiếng Anh cô muốn học sinh đọc (giữ nguyên từng chữ)"
             className="w-full px-3 py-2.5 text-sm border-2 border-blue-100 rounded-xl focus:outline-none focus:border-brand-green" />
+          </div>
         )}
         {mode !== 'library' && (
           <button onClick={generate} disabled={!!busy}
@@ -856,6 +935,16 @@ const AssignTab: React.FC<{
             <span className={`px-2.5 py-1 rounded-full font-black ${draft.audio ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>
               {draft.audio ? '🎙️ Giọng AI' : draft.audio === undefined ? '🎙️ Đang tải giọng đọc…' : '🔈 Giọng đọc của máy'}
             </span>
+            <span className={`px-2.5 py-1 rounded-full font-black ${draft.exercise ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>
+              {draft.exercise ? '🧩 Có 30 câu bài tập' : '🧩 Chưa có bài tập'}
+            </span>
+            {exBusy ? (
+              <span className="flex items-center gap-1 font-black text-blue-700"><RefreshCw size={14} className="animate-spin" /> Đang tạo bài tập…</span>
+            ) : draft.exercise ? (
+              <button onClick={() => setDraft({ ...draft, exercise: null })} className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-black text-slate-500">Bỏ bài tập</button>
+            ) : (
+              <button onClick={addExercise} className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-black text-slate-700 hover:border-blue-300">+ Tạo bài tập (AI)</button>
+            )}
             {media ? (
               <span className="flex items-center gap-1 font-black text-blue-700"><RefreshCw size={14} className="animate-spin" />
                 {media === 'img' ? 'Đang tạo ảnh bằng key của cô…' : 'Đang tạo giọng đọc AI…'}</span>
