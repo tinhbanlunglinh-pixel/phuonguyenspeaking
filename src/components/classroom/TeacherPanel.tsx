@@ -147,6 +147,12 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
     } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   };
 
+  /** Nút trên đầu trang: mở khu thiết kế & giao bài (Kho bài mẫu + tạo bài + giao lớp) */
+  const goDesign = () => {
+    setTab('assign');
+    setTimeout(() => document.getElementById('design-area')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  };
+
   const copy = async (text: string, key: string) => {
     try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(null), 1500); } catch { /* bỏ qua */ }
   };
@@ -181,8 +187,9 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <button onClick={onOpenStudio} className="flex items-center gap-1.5 bg-brand-yellow text-slate-900 font-black text-xs sm:text-sm px-3 py-2 rounded-xl hover:brightness-95">
-              <Mic size={16} /> <span className="hidden sm:inline">Phòng luyện nói</span>
+            <button onClick={goDesign} title="Thiết kế và giao bài cho học sinh — gồm Kho bài mẫu, tạo bài bằng AI, giao cho lớp"
+              className="flex items-center gap-1.5 bg-brand-yellow text-slate-900 font-black text-xs sm:text-sm px-3 py-2 rounded-xl hover:brightness-95 text-left leading-tight">
+              <BookOpen size={16} className="shrink-0" /> <span className="hidden sm:inline">Thiết kế và giao bài cho học sinh</span><span className="sm:hidden">Giao bài</span>
             </button>
             <button onClick={() => setShowKeyModal(true)} title="API key Gemini của cô (dùng để tạo bài và chấm bài)"
               className={`flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-black ${apiKey ? 'bg-white/15 text-white hover:bg-white/25' : 'bg-amber-400 text-slate-900 animate-pulse'}`}>
@@ -230,7 +237,7 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
         </aside>
 
         {/* Chi tiết lớp */}
-        <section className="lg:col-span-8 space-y-4 min-w-0">
+        <section id="design-area" className="lg:col-span-8 space-y-4 min-w-0 scroll-mt-24">
           {error && (
             <div role="alert" className="flex items-start justify-between gap-2 text-sm font-bold text-red-700 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
               <span>{error}</span>
@@ -244,7 +251,7 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
               <Users size={48} className="mx-auto mb-3 text-blue-200" />
               Cô chưa có lớp nào. Tạo lớp ở ô "Tạo lớp mới" để nhận mã lớp gửi học sinh — kho bài soạn sẵn ở ngay bên dưới.
             </div>
-            <AssignTab code={null} data={EMPTY_CLASS} onError={setError} hasKey={!!apiKey} onNeedKey={() => setShowKeyModal(true)} />
+            <AssignTab code={null} data={EMPTY_CLASS} onError={setError} hasKey={!!apiKey} onNeedKey={() => setShowKeyModal(true)} classes={classes} />
               </>
           ) : (
             <>
@@ -272,7 +279,7 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
               </div>
 
               <div className="flex gap-2 bg-white p-1.5 rounded-2xl shadow border border-blue-100">
-                {([['students', 'Kết quả', Users], ['assign', 'Giao bài nói', BookOpen], ['grade', 'Chấm & báo cáo', ClipboardCheck]] as const).map(([k, label, Icon]) => (
+                {([['students', 'Kết quả', Users], ['assign', 'Thiết kế & giao bài', BookOpen], ['grade', 'Chấm & báo cáo', ClipboardCheck]] as const).map(([k, label, Icon]) => (
                   <button key={k} onClick={() => setTab(k)}
                     className={`relative flex-1 flex items-center justify-center gap-1.5 py-2.5 px-1 rounded-xl font-black text-xs sm:text-sm transition-all ${
                       tab === k ? 'bg-brand-green text-white shadow' : 'text-slate-600 hover:bg-slate-100'}`}>
@@ -306,7 +313,7 @@ export const TeacherPanel: React.FC<Props> = ({ onOpenStudio, onLogout }) => {
                   )}
                 </div>
               ) : tab === 'assign' ? (
-                <AssignTab code={selected} data={data} onError={setError} hasKey={!!apiKey} onNeedKey={() => setShowKeyModal(true)} />
+                <AssignTab code={selected} data={data} onError={setError} hasKey={!!apiKey} onNeedKey={() => setShowKeyModal(true)} classes={classes} />
               ) : (
                 <GradeTab
                   code={selected} className={classes[selected]?.name || ''} data={data} hasKey={!!apiKey}
@@ -435,7 +442,8 @@ const StudentsTable: React.FC<{
 // ---------------- Giao bài nói (cô tạo bằng AI) ----------------
 const AssignTab: React.FC<{
   code: string | null; data: ClassData; onError: (m: string) => void; hasKey: boolean; onNeedKey: () => void;
-}> = ({ code, data, onError, hasKey, onNeedKey }) => {
+  classes: Record<string, { name: string; createdAt: number }>;
+}> = ({ code, data, onError, hasKey, onNeedKey, classes }) => {
   const [mode, setMode] = useState<'library' | 'generate' | 'useInput'>('library');
   const [input, setInput] = useState('');
   const [level, setLevel] = useState('Starters');
@@ -443,6 +451,10 @@ const AssignTab: React.FC<{
   const [busy, setBusy] = useState<'' | 'gen' | 'save'>('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [targets, setTargets] = useState<string[]>(code ? [code] : []);
+  useEffect(() => { setTargets(code ? [code] : []); }, [code]);
+  const classCodes = Object.keys(classes).sort((a, b) => (classes[b].createdAt || 0) - (classes[a].createdAt || 0));
+  const toggleTarget = (c: string) => setTargets(t => (t.includes(c) ? t.filter(x => x !== c) : [...t, c]));
   const [library, setLibrary] = useState<Record<string, SavedLesson>>({});
   const [peek, setPeek] = useState<string | null>(null);
   useEffect(() => listenLibrary(setLibrary), []);
@@ -559,6 +571,7 @@ const AssignTab: React.FC<{
       const lid = reuse || newLibraryId();
       made = true;
       setDraft({ ...lesson, origin: 'ai', libId: lid, image: undefined, audio: null });
+      setTimeout(() => document.getElementById('assign-draft')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
       try { await saveToLibrary(lid, { ...lesson, image: undefined, audio: null }, !reuse); } catch { onError('Bài đã tạo nhưng chưa lưu được vào kho (mất mạng?).'); }
       setBusy('');
       // Ảnh + giọng đọc AI tạo ngay sau bài (dùng key của cô), tự lưu vào kho
@@ -581,11 +594,14 @@ const AssignTab: React.FC<{
 
   const assign = async () => {
     if (!draft) return;
-    if (!code) { onError('Cô tạo lớp trước (ô Tạo lớp mới) rồi mới giao bài được nhé. Bài trong kho vẫn giữ nguyên.'); return; }
+    if (!classCodes.length) { onError('Cô tạo lớp trước (ô Tạo lớp mới) rồi mới giao bài được nhé. Bài trong kho vẫn giữ nguyên.'); return; }
+    if (!targets.length) { onError('Cô tích chọn ít nhất một lớp để giao bài nhé.'); return; }
     if (!draft.readingText.trim()) { onError('Bài đọc đang trống.'); return; }
     setBusy('save');
     try {
-      await addAssignment(code, draft.topic, level, note, { ...draft, audio: draft.audio || null });
+      for (const c of targets) {
+        await addAssignment(c, draft.topic, level, note, { ...draft, audio: draft.audio || null });
+      }
       // Cập nhật kho: bài của cô lưu cả phần cô sửa; bài mẫu cô đã sửa thì lưu thành bài mới của cô.
       try {
         const lesson = { ...draft, level };
@@ -601,9 +617,36 @@ const AssignTab: React.FC<{
           }
         }
       } catch { /* lỗi lưu kho không chặn việc giao bài */ }
+      const names = targets.map(c => classes[c]?.name || c).join(', ');
       setDraft(null); setInput(''); setNote('');
-      setSavedMsg('Đã giao bài cho cả lớp. Học sinh mở app là thấy ngay, không cần API key.');
+      setSavedMsg(`Đã giao bài cho ${targets.length > 1 ? `${targets.length} lớp (${names})` : `lớp ${names}`}. Học sinh mở app là thấy ngay, không cần API key.`);
     } catch (e: any) { onError(e.message); } finally { setBusy(''); }
+  };
+
+  /** Lưu bản nháp (kể cả phần cô đã sửa) vào Kho bài chung — không cần giao cho lớp nào. */
+  const saveDraft = async (quiet = false) => {
+    if (!draft || !draft.readingText.trim()) return false;
+    try {
+      const audio = draft.audio === undefined ? undefined : (draft.audio || null);
+      const lesson = { topic: draft.topic, level, readingText: draft.readingText, translation: draft.translation, vocabulary: draft.vocabulary, image: draft.image, audio };
+      if (draft.libId) {
+        await saveToLibrary(draft.libId, lesson, false);
+        if (!quiet) setSavedMsg(`Đã lưu "${draft.topic}" vào Kho bài (trình độ ${level}).`);
+      } else if (draft.sampleId) {
+        const s0 = SAMPLE_LESSONS[draft.sampleId];
+        const changed = !s0 || s0.readingText !== draft.readingText.trim() || s0.topic !== draft.topic.trim() || s0.translation !== draft.translation.trim() || (!!draft.audio && !draft.sampleAudio);
+        if (!changed) { if (!quiet) setSavedMsg('Bài mẫu này đã có sẵn trong Kho bài. Cô sửa nội dung rồi bấm lưu thì sẽ thành bài riêng của cô.'); return true; }
+        const lid = newLibraryId();
+        await saveToLibrary(lid, lesson, true);
+        setDraft(d => (d ? { ...d, origin: 'saved', libId: lid, sampleId: undefined } : d));
+        if (!quiet) setSavedMsg(`Đã lưu bản sửa "${draft.topic}" thành bài riêng của cô trong Kho bài (trình độ ${level}).`);
+      }
+      return true;
+    } catch { onError('Chưa lưu được vào Kho bài (mất mạng?). Cô thử lại nhé.'); return false; }
+  };
+  const closeDraft = async () => {
+    if (draft && draft.origin !== 'sample') await saveDraft(true); // đóng bảng thì phần cô sửa vẫn được giữ lại
+    setDraft(null);
   };
 
   const draftAudio = draft?.audio;
@@ -650,7 +693,7 @@ const AssignTab: React.FC<{
     <div className="space-y-4">
       <div className="bg-white rounded-3xl shadow-xl border-4 border-blue-100 p-4 sm:p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-black text-blue-600 uppercase tracking-wider">Chọn bài nói và giao cho cả lớp</p>
+          <p className="text-xs font-black text-blue-600 uppercase tracking-wider">Thiết kế và giao bài cho học sinh</p>
           {!hasKey && mode !== 'library' && (
             <button onClick={onNeedKey} className="flex items-center gap-1 text-xs font-black px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800">
               <Zap size={14} /> Cô nhập API key Gemini để tạo bài
@@ -658,7 +701,7 @@ const AssignTab: React.FC<{
           )}
         </div>
         <div className="flex gap-1 sm:gap-2 bg-slate-100 p-1 rounded-xl text-xs sm:text-sm">
-          {([['library', '📚 Kho bài'], ['generate', '💡 AI tạo bài'], ['useInput', '📝 Đoạn văn của cô']] as const).map(([m, label]) => (
+          {([['library', '📚 Kho bài theo trình độ'], ['generate', '💡 AI tạo bài'], ['useInput', '📝 Đoạn văn của cô']] as const).map(([m, label]) => (
             <button type="button" key={m} onClick={() => setMode(m)}
               className={`flex-1 py-2 px-1 rounded-lg font-black ${mode === m ? 'bg-white shadow text-brand-green-dark' : 'text-slate-500'}`}>{label}</button>
           ))}
@@ -672,6 +715,9 @@ const AssignTab: React.FC<{
           ))}
         </div>
         <p className="text-[11px] text-slate-400">{LEVEL_INFO[level]?.label} — {LEVEL_INFO[level]?.desc}</p>
+        {mode !== 'library' && (
+          <p className="text-[11px] font-bold text-blue-600">📚 Bài cô tạo xong sẽ tự lưu vào Kho bài, mục trình độ {level}.</p>
+        )}
         {mode === 'library' ? (
           <div className="space-y-3">
             <div className="rounded-2xl bg-gradient-to-r from-blue-50 to-amber-50 border border-blue-100 p-3 space-y-2">
@@ -695,16 +741,20 @@ const AssignTab: React.FC<{
               {bulk?.msg && !bulk.running && <p className="text-[11px] font-bold text-slate-600">{bulk.msg}</p>}
               <p className="text-[11px] text-slate-400">Tạo xong thì mọi lớp nghe giọng này, không cần tạo lại. Bài nào đã có giọng thì giữ nguyên.</p>
             </div>
+            <div className="rounded-2xl border-2 border-blue-200 bg-blue-50/40 px-3 py-2.5">
+              <p className="text-sm font-black text-brand-green-dark">📚 Kho bài — trình độ {level} ({samples.length + mine.length} bài)</p>
+              <p className="text-[11px] text-slate-500">Kho chia theo trình độ: bấm tên trình độ ở trên để đổi. Gồm bài mẫu chuẩn và bài cô tự tạo.</p>
+            </div>
             <div className="rounded-2xl border border-blue-100">
-              <p className="px-3 pt-2.5 text-[11px] font-black text-blue-700 uppercase tracking-wider">⭐ Bài mẫu chuẩn ({samples.length})</p>
+              <p className="px-3 pt-2.5 text-[11px] font-black text-blue-700 uppercase tracking-wider">⭐ Bài mẫu chuẩn — {level} ({samples.length})</p>
               <ul className="divide-y divide-slate-100 px-1">
                 {samples.map(([id, l]) => lessonRow(id, l, 'sample'))}
               </ul>
             </div>
             <div className="rounded-2xl border border-amber-100">
-              <p className="px-3 pt-2.5 text-[11px] font-black text-amber-700 uppercase tracking-wider">✍️ Bài cô đã tạo ({mine.length})</p>
+              <p className="px-3 pt-2.5 text-[11px] font-black text-amber-700 uppercase tracking-wider">✍️ Bài cô đã tạo — {level} ({mine.length})</p>
               {mine.length === 0 ? (
-                <p className="px-3 py-3 text-xs text-slate-400">Chưa có. Mỗi bài cô tạo bằng AI sẽ tự lưu vào đây để dùng lại cho lớp khác.</p>
+                <p className="px-3 py-3 text-xs text-slate-400">Chưa có bài trình độ này. Mỗi bài cô tạo ở tab "AI tạo bài" hoặc "Đoạn văn của cô" sẽ tự lưu vào đây để dùng lại cho lớp khác.</p>
               ) : (
                 <ul className="divide-y divide-slate-100 px-1">
                   {mine.map(([id, l]) => lessonRow(id, l, 'saved'))}
@@ -735,7 +785,7 @@ const AssignTab: React.FC<{
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-black text-amber-700 uppercase tracking-wider">Xem lại và sửa trước khi giao · {level}</p>
             <span className="text-[11px] font-black px-2 py-1 rounded-full bg-blue-50 text-blue-700">
-              {draft.origin === 'sample' ? '⭐ Bài mẫu chuẩn' : '✓ Đã lưu vào kho của cô'}
+              {draft.origin === 'sample' ? '⭐ Bài mẫu chuẩn' : '✓ Đã lưu vào Kho bài chung'}
             </span>
           </div>
           <div className="space-y-2">
@@ -798,13 +848,38 @@ const AssignTab: React.FC<{
           )}
             </div>
           </details>
+          <div className="rounded-2xl border-2 border-blue-100 bg-blue-50/50 p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-black text-blue-700 uppercase tracking-wider">📤 Giao cho lớp nào?</p>
+              {classCodes.length > 1 && (
+                <button type="button" onClick={() => setTargets(targets.length === classCodes.length ? [] : classCodes)}
+                  className="text-[11px] font-black text-blue-600 hover:underline">
+                  {targets.length === classCodes.length ? 'Bỏ chọn hết' : 'Chọn tất cả các lớp'}
+                </button>
+              )}
+            </div>
+            {classCodes.length === 0 ? (
+              <p className="text-xs text-slate-500">Cô chưa có lớp nào. Tạo lớp ở ô "Tạo lớp mới" rồi quay lại giao bài.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {classCodes.map(c => (
+                  <label key={c} className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer text-sm font-bold ${
+                    targets.includes(c) ? 'bg-white border-brand-green text-brand-green-dark' : 'bg-white border-slate-200 text-slate-600'}`}>
+                    <input type="checkbox" checked={targets.includes(c)} onChange={() => toggleTarget(c)} className="w-4 h-4 accent-blue-600" />
+                    {classes[c].name}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
           <input value={note} onChange={e => setNote(e.target.value)} placeholder="Lời nhắn cho học sinh (không bắt buộc), VD: Hạn nộp tối thứ Năm"
             className="w-full px-3 py-2.5 text-sm border-2 border-blue-100 rounded-xl focus:outline-none focus:border-brand-green" />
           <div className="flex flex-wrap gap-2">
             <button onClick={assign} disabled={!!busy} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-brand-green text-white font-black text-sm disabled:opacity-60">
-              {busy === 'save' ? <RefreshCw size={16} className="animate-spin" /> : <Check size={16} />} {code ? 'Giao bài cho lớp' : 'Giao bài (cần tạo lớp trước)'}
+              {busy === 'save' ? <RefreshCw size={16} className="animate-spin" /> : <Check size={16} />} {!classCodes.length ? 'Giao bài (cần tạo lớp trước)' : targets.length > 1 ? `Giao bài cho ${targets.length} lớp` : 'Giao bài cho lớp'}
             </button>
-            <button onClick={() => setDraft(null)} className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-black text-sm">Đóng</button>
+            <button onClick={() => saveDraft()} disabled={!!busy} className="px-4 py-2.5 rounded-xl bg-blue-50 text-blue-700 font-black text-sm hover:bg-blue-100 disabled:opacity-60">📚 Chỉ lưu vào Kho bài</button>
+            <button onClick={closeDraft} className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-black text-sm">Đóng</button>
           </div>
         </div>
       )}
